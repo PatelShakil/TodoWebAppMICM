@@ -1,0 +1,229 @@
+﻿@{
+	ViewData["Title"] = "Todo App";
+}
+
+<div class="container mt-5">
+
+	<div class="row mb-4">
+		<!-- Storage Layer Selection -->
+		<div class="col-md-8">
+			<div class="card shadow-sm rounded">
+				<div class="card-header bg-primary text-white">
+					<h5 class="mb-0">Storage Layer Selection</h5>
+				</div>
+				<div class="card-body">
+					<label for="storageType" class="form-label">Select Storage:</label>
+					<select class="form-select" id="storageType">
+						<option value="TextFile">Text File</option>
+						<option value="SqlServer">SQL Server</option>
+						<option value="LocalStorage">Local Storage</option>
+					</select>
+				</div>
+			</div>
+		</div>
+
+		<!-- Architecture Info -->
+		<div class="col-md-4">
+			<div class="card shadow-sm rounded">
+				<div class="card-header bg-info text-dark">
+					<h5 class="mb-0">Architecture Info</h5>
+				</div>
+				<div class="card-body">
+					<p class="mb-2">
+						<strong>Storage Type:</strong> <span id="infoStorageType"></span>
+					</p>
+					<p class="mb-0">
+						<strong>Todo Count:</strong> <span id="infoTodoCount"></span>
+					</p>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<div class="row">
+		<!-- Todo Items -->
+		<div class="col-md-6 mb-4">
+			<div class="card shadow-sm rounded">
+				<div class="card-header bg-secondary text-white">
+					<h5 class="mb-0">Todo Items</h5>
+				</div>
+				<div class="card-body">
+					<ul class="list-group" id="todoList"></ul>
+				</div>
+			</div>
+		</div>
+
+		<!-- Add New Todo Item -->
+		<div class="col-md-6 mb-4">
+			<div class="card shadow-sm rounded">
+				<div class="card-header bg-success text-white">
+					<h5 class="mb-0">Add New TODO Item</h5>
+				</div>
+				<div class="card-body">
+					<div class="input-group">
+						<input type="text" id="newTodo" class="form-control" placeholder="Enter todo...">
+						<button id="addBtn" type="button" class="btn btn-dark">Add Todo</button>
+					</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+</div>
+
+@section Scripts {
+	<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+	<script>
+		const apiBase = "https://localhost:7290/api/todo";
+
+// Abstract service interface - selected at runtime
+		let TodoService = null;
+
+		class TodoNetworkService {
+			getAll(storageType) {
+				return $.get(`${apiBase}?storageType=${storageType}`);
+			}
+
+			add(storageType, title) {
+				return $.ajax({
+					url: `${apiBase}?storageType=${storageType}`,
+					type: "POST",
+					contentType: "application/json",
+					data: JSON.stringify({ title }),
+				});
+			}
+
+			remove(storageType, id) {
+				return $.ajax({
+					url: `${apiBase}/${id}?storageType=${storageType}`,
+					type: "DELETE"
+				});
+			}
+
+			toggle(storageType, id) {
+				return $.ajax({
+					url: `${apiBase}/toggle/${id}?storageType=${storageType}`,
+					type: "PUT"
+				});
+			}
+		}
+
+		class TodoLocalStorageService {
+			constructor() {
+				this.key = "todo_items";
+			}
+
+			_readData() {
+				return JSON.parse(localStorage.getItem(this.key)) || [];
+			}
+
+			_writeData(data) {
+				localStorage.setItem(this.key, JSON.stringify(data));
+			}
+
+			getAll() {
+				return Promise.resolve(this._readData());
+			}
+
+			add(_, title) {
+				const todos = this._readData();
+				const newTodo = {
+					id: Date.now(),
+					title: title,
+					isCompleted: false
+				};
+				todos.push(newTodo);
+				this._writeData(todos);
+				return Promise.resolve();
+			}
+
+			remove(_, id) {
+				let todos = this._readData();
+				todos = todos.filter(t => t.id !== id);
+				this._writeData(todos);
+				return Promise.resolve();
+			}
+
+			toggle(_, id) {
+				const todos = this._readData();
+				const index = todos.findIndex(t => t.id === id);
+				if (index !== -1) {
+					todos[index].isCompleted = !todos[index].isCompleted;
+					this._writeData(todos);
+				}
+				return Promise.resolve();
+			}
+		}
+
+		function getStorageType() {
+			return $("#storageType").val();
+		}
+
+		function getServiceInstance() {
+			const storageType = getStorageType();
+			if (storageType === "LocalStorage") {
+				return new TodoLocalStorageService();
+			} else {
+				return new TodoNetworkService();
+			}
+		}
+
+		function loadTodos() {
+			const storageType = getStorageType();
+			TodoService = getServiceInstance();
+
+			TodoService.getAll(storageType).then(data => {
+				$("#todoList").empty();
+				data.forEach(todo => {
+					const status = todo.isCompleted ? "checked" : "";
+					$("#todoList").append(`
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <div>
+                                <input type="checkbox" class="form-check-input me-2 toggleTodo" data-id="${todo.id}" ${status}>
+                                <span class="${status ? 'text-decoration-line-through' : ''}">${todo.title}</span>
+                            </div>
+                            <button class="btn btn-sm btn-danger deleteBtn" data-id="${todo.id}">Delete</button>
+                        </li>
+                    `);
+				});
+				$("#infoStorageType").text(storageType);
+				$("#infoTodoCount").text(data.length);
+			});
+		}
+
+		$(document).ready(function() {
+			loadTodos();
+
+			$("#storageType").change(function() {
+				loadTodos();
+			});
+
+			$("#addBtn").click(function() {
+				const title = $("#newTodo").val().trim();
+				if (title === "") return;
+
+				TodoService.add(getStorageType(), title)
+					.then(() => {
+						$("#newTodo").val("");
+						loadTodos();
+					});
+			});
+
+			$(document).on("click",
+				".deleteBtn",
+				function() {
+					const id = $(this).data("id");
+					TodoService.remove(getStorageType(), id)
+						.then(() => loadTodos());
+				});
+
+			$(document).on("change",
+				".toggleTodo",
+				function() {
+					const id = $(this).data("id");
+					TodoService.toggle(getStorageType(), id)
+						.then(() => loadTodos());
+				});
+		});
+	</script>
+}
